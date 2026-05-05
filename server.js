@@ -89,27 +89,34 @@ app.post('/pay', (req, res) => {
 
 // ================= VIDEO SIGNALING =================
 io.on('connection', socket => {
-  console.log('User connected');
+  io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
 
-  socket.on('join-room', roomId => {
+  socket.on("join-room", (roomId) => {
     socket.join(roomId);
+    console.log(`User ${socket.id} joined room ${roomId}`);
+
+    // 🔥 Notify other user
+    socket.to(roomId).emit("user-joined");
+
+    // Offer
+    socket.on("offer", (offer) => {
+      socket.to(roomId).emit("offer", offer);
+    });
+
+    // Answer
+    socket.on("answer", (answer) => {
+      socket.to(roomId).emit("answer", answer);
+    });
+
+    // ICE Candidate
+    socket.on("ice-candidate", (candidate) => {
+      socket.to(roomId).emit("ice-candidate", candidate);
+    });
   });
 
-  socket.on('offer', data => {
-    socket.to(data.roomId).emit('offer', data);
-  });
-
-  socket.on('answer', data => {
-    socket.to(data.roomId).emit('answer', data);
-  });
-
-  socket.on('ice-candidate', data => {
-    socket.to(data.roomId).emit('ice-candidate', data);
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
   });
 });
-
-// ================= START SERVER =================
-const PORT = 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
