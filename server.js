@@ -58,26 +58,28 @@ app.post("/match", (req, res) => {
     return res.status(400).json({ error: "userId required" });
   }
 
-  // No one waiting → store user
-  if (!waitingUser) {
-    waitingUser = userId;
+  // ✅ If someone is waiting → match them FIRST
+  if (waitingUser && waitingUser !== userId) {
+    const partner = waitingUser;
+    waitingUser = null;
+
+    const matchId = "room_" + Date.now();
 
     return res.json({
-      message: "Waiting for a match...",
+      matchId,
+      partner,
     });
   }
 
-  // Someone waiting → match them
-  const partner = waitingUser;
-  waitingUser = null;
-
-  const matchId = "room_" + Date.now();
+  // ✅ Otherwise → store this user
+  waitingUser = userId;
 
   return res.json({
-    matchId,
-    partner,
+    message: "Waiting for a match...",
   });
 });
+
+
 // ⚠️ IMPORTANT: use server.listen NOT app.listen
 const PORT = process.env.PORT || 3000;
 
