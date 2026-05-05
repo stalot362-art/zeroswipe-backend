@@ -49,7 +49,35 @@ io.on("connection", (socket) => {
 app.get("/", (req, res) => {
   res.send("ZeroSwipe backend running");
 });
+let waitingUser = null;
 
+app.post("/match", (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "userId required" });
+  }
+
+  // No one waiting → store user
+  if (!waitingUser) {
+    waitingUser = userId;
+
+    return res.json({
+      message: "Waiting for a match...",
+    });
+  }
+
+  // Someone waiting → match them
+  const partner = waitingUser;
+  waitingUser = null;
+
+  const matchId = "room_" + Date.now();
+
+  return res.json({
+    matchId,
+    partner,
+  });
+});
 // ⚠️ IMPORTANT: use server.listen NOT app.listen
 const PORT = process.env.PORT || 3000;
 
