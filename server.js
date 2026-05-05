@@ -22,7 +22,6 @@ io.on("connection", (socket) => {
 
   socket.on("join-room", (roomId) => {
     socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`);
 
     socket.to(roomId).emit("user-joined");
 
@@ -44,14 +43,17 @@ io.on("connection", (socket) => {
   });
 });
 
-// ================= API ROUTES =================
+// ================= USER STORAGE =================
+const users = {};
+
+// ================= ROUTES =================
 
 // Health check
 app.get("/", (req, res) => {
   res.send("ZeroSwipe backend running");
 });
 
-// 🔥 MATCH (temporary always-match version)
+// ================= MATCH =================
 app.post("/match", (req, res) => {
   const { userId } = req.body;
 
@@ -59,6 +61,21 @@ app.post("/match", (req, res) => {
     return res.status(400).json({ error: "userId required" });
   }
 
+  if (!users[userId]) {
+    users[userId] = {
+      unmatched: 0,
+      mustPay: false,
+    };
+  }
+
+  // 🚨 BLOCK if user must pay
+  if (users[userId].mustPay) {
+    return res.status(403).json({
+      error: "Payment required before next match",
+    });
+  }
+
+  // ✅ Always match (test mode)
   const matchId = "room_" + Date.now();
 
   return res.json({
@@ -67,31 +84,37 @@ app.post("/match", (req, res) => {
   });
 });
 
-// Optional: create user
-app.post("/create-user", (req, res) => {
+// ================= UNMATCH =================
+app.post("/unmatch", (req, res) => {
   const { userId } = req.body;
 
-  if (!userId) {
-    return res.status(400).json({ error: "userId required" });
+  if (!users[userId]) {
+    users[userId] = {
+      unmatched: 0,
+      mustPay: false,
+    };
   }
 
+  users[userId].unmatched += 1;
+  users[userId].mustPay = true;
+
   return res.json({
-    message: "User created successfully",
-    userId,
+    message: "You unmatched. Pay $1 to continue.",
   });
 });
 
-// Optional: unmatch
-app.post("/unmatch", (req, res) => {
-  return res.json({
-    message: "Unmatched. Pay $1 to continue.",
-  });
-});
-
-// Optional: pay
+// ================= PAY =================
 app.post("/pay", (req, res) => {
+  const { userId } = req.body;
+
+  if (!users[userId]) {
+    return res.status(400).json({ error: "User not found" });
+  }
+
+  users[userId].mustPay = false;
+
   return res.json({
-    message: "Payment successful",
+    message: "Payment successful. You can match again.",
   });
 });
 
