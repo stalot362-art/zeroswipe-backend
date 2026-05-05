@@ -7,17 +7,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔥 Create HTTP server
+// ================= HTTP SERVER =================
 const server = http.createServer(app);
 
-// 🔥 Attach socket.io
+// ================= SOCKET.IO =================
 const io = new Server(server, {
   cors: {
     origin: "*",
   },
 });
 
-// ================= SOCKET =================
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
@@ -45,12 +44,14 @@ io.on("connection", (socket) => {
   });
 });
 
-// ================= API =================
+// ================= API ROUTES =================
+
+// Health check
 app.get("/", (req, res) => {
   res.send("ZeroSwipe backend running");
 });
-let waitingUser = null;
 
+// 🔥 MATCH (temporary always-match version)
 app.post("/match", (req, res) => {
   const { userId } = req.body;
 
@@ -58,29 +59,43 @@ app.post("/match", (req, res) => {
     return res.status(400).json({ error: "userId required" });
   }
 
-  // ✅ If someone is waiting → match them FIRST
-  if (waitingUser && waitingUser !== userId) {
-    const partner = waitingUser;
-    waitingUser = null;
-
-    const matchId = "room_" + Date.now();
-
-    return res.json({
-      matchId,
-      partner,
-    });
-  }
-
-  // ✅ Otherwise → store this user
-  waitingUser = userId;
+  const matchId = "room_" + Date.now();
 
   return res.json({
-    message: "Waiting for a match...",
+    matchId,
+    partner: "demo_user",
   });
 });
 
+// Optional: create user
+app.post("/create-user", (req, res) => {
+  const { userId } = req.body;
 
-// ⚠️ IMPORTANT: use server.listen NOT app.listen
+  if (!userId) {
+    return res.status(400).json({ error: "userId required" });
+  }
+
+  return res.json({
+    message: "User created successfully",
+    userId,
+  });
+});
+
+// Optional: unmatch
+app.post("/unmatch", (req, res) => {
+  return res.json({
+    message: "Unmatched. Pay $1 to continue.",
+  });
+});
+
+// Optional: pay
+app.post("/pay", (req, res) => {
+  return res.json({
+    message: "Payment successful",
+  });
+});
+
+// ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
