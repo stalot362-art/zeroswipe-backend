@@ -16,66 +16,70 @@ const io = new Server(server, {
 // ===== USERS =====
 const users = {};
 
-// ===== MATCHING QUEUE =====
+// ===== WAITING QUEUE (SOCKETS) =====
 let waitingQueue = [];
 
-// ===== SOCKET =====
+// ===== SOCKET MATCHING =====
 io.on("connection", (socket) => {
-  socket.on("join-room", (roomId) => {
-    socket.join(roomId);
+  console.log("User connected:", socket.id);
 
-    socket.to(roomId).emit("user-joined");
+  // 🔥 FIND MATCH
+  socket.on("find-match", (userId) => {
+    console.log("Looking for match:", userId);
 
-    socket.on("offer", (offer) => {
-      socket.to(roomId).emit("offer", offer);
-    });
+    // Ensure user exists
+    if (!users[userId]) {
+      users[userId] = { unmatched: 0, mustPay: false };
+    }
 
-    socket.on("answer", (answer) => {
-      socket.to(roomId).emit("answer", answer);
-    });
+    // Block if payment required
+    if (users[userId].mustPay) {
+      socket.emit("payment-required");
+      return;
+    }
 
-    socket.on("ice-candidate", (candidate) => {
-      socket.to(roomId).emit("ice-candidate", candidate);
-    });
+    // If someone is waiting → match instantly
+    if (waitingQueue.length > 0) {
+      const partnerSocket = waitingQueue.shift();
+
+      const roomId = "room_" + Date.now();
+
+      socket.join(roomId);
+      partnerSocket.join(roomId);
+
+      console.log("MATCHED:", socket.id, "with", partnerSocket.id);
+
+      socket.emit("match-found", { roomId });
+      partnerSocket.emit("match-found", { roomId });
+
+    } else {
+      // Otherwise → wait
+      waitingQueue.push(socket);
+      socket.emit("waiting");
+
+      console.log("Added to queue:", socket.id);
+    }
   });
-});
 
-// ===== MATCH =====
-app.post("/match", (req, res) => {
-  const { userId } = req.body;
+  // 🔥 WEBRTC SIGNALING
+  socket.on("offer", ({ roomId, offer }) => {
+    socket.to(roomId).emit("offer", offer);
+  });
 
-  if (!users[userId]) {
-    users[userId] = { unmatched: 0, mustPay: false };
-  }
+  socket.on("answer", ({ roomId, answer }) => {
+    socket.to(roomId).emit("answer", answer);
+  });
 
-  if (users[userId].mustPay) {
-    return res.status(403).json({ error: "Payment required" });
-  }
+  socket.on("ice-candidate", ({ roomId, candidate }) => {
+    socket.to(roomId).emit("ice-candidate", candidate);
+  });
 
-  console.log("User looking for match:", userId);
+  // 🔥 DISCONNECT
+  socket.on("disconnect", () => {
+    console.log("Disconnected:", socket.id);
 
-  // If someone is waiting → match them
-  if (waitingQueue.length > 0) {
-    const partner = waitingQueue.shift();
-
-    const roomId = "room_" + Date.now();
-
-    console.log("MATCHED:", userId, "with", partner.userId);
-
-    return res.json({
-      message: "Match found",
-      roomId,
-      partnerId: partner.userId
-    });
-  }
-
-  // Otherwise → wait
-  waitingQueue.push({ userId });
-
-  console.log("User added to queue:", userId);
-
-  return res.json({
-    message: "Waiting for a match"
+    // Remove from queue if waiting
+    waitingQueue = waitingQueue.filter(s => s !== socket);
   });
 });
 
@@ -90,8 +94,6 @@ app.post("/unmatch", (req, res) => {
   users[userId].unmatched += 1;
   users[userId].mustPay = true;
 
-  console.log("User unmatched:", userId);
-
   res.json({
     message: "Unmatched. Pay $1 to continue."
   });
@@ -101,7 +103,7 @@ app.post("/unmatch", (req, res) => {
 app.post("/pay", async (req, res) => {
   const { userId, reference } = req.body;
 
-  console.log("PAY START:", userId, reference);
+  console.log("PAY:", userId, reference);
 
   try {
     const response = await axios.get(
@@ -147,5 +149,5 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("Running on port", PORT);
 });
