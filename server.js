@@ -106,27 +106,28 @@ app.post("/unmatch", (req, res) => {
 app.post("/pay", async (req, res) => {
   const { userId, reference } = req.body;
 
-  if (!userId || !reference) {
-    return res.status(400).json({
-      error: "Missing userId or reference"
-    });
-  }
+  console.log("PAY REQUEST:", { userId, reference });
 
   try {
     const response = await axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
         headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY || ""}`
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
         }
       }
     );
 
-    const data = response.data.data;
+    console.log("PAYSTACK RESPONSE:", JSON.stringify(response.data));
+
+    const data = response.data?.data;
+
+    if (!data) {
+      throw new Error("No data from Paystack");
+    }
 
     if (data.status === "success") {
 
-      // Ensure user exists
       if (!users[userId]) {
         users[userId] = {
           unmatched: 0,
@@ -134,10 +135,9 @@ app.post("/pay", async (req, res) => {
         };
       }
 
-      // Unlock next match
       users[userId].mustPay = false;
 
-      console.log(`Payment verified for ${userId}`);
+      console.log("USER UNLOCKED:", userId);
 
       return res.json({
         message: "Payment verified and unlocked"
@@ -150,7 +150,8 @@ app.post("/pay", async (req, res) => {
     }
 
   } catch (err) {
-    console.error("PAYMENT ERROR:", err.message);
+    console.error("FULL PAYMENT ERROR:");
+    console.error(err.response?.data || err.message || err);
 
     return res.status(500).json({
       error: "Server update failed"
