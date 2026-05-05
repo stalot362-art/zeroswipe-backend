@@ -13,8 +13,17 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-// ================= SOCKET =================
+// ================= DEBUG =================
+console.log("Server starting...");
+console.log("User store initialized");
+
+// ================= IN-MEMORY STORE =================
+const users = {};
+
+// ================= SOCKET (VIDEO CALL) =================
 io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
   socket.on("join-room", (roomId) => {
     socket.join(roomId);
     socket.to(roomId).emit("user-joined");
@@ -31,27 +40,40 @@ io.on("connection", (socket) => {
       socket.to(roomId).emit("ice-candidate", candidate);
     });
   });
-});
 
-// ================= USERS =================
-const users = {};
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
+});
 
 // ================= MATCH =================
 app.post("/match", (req, res) => {
   const { userId } = req.body;
 
-  if (!users[userId]) {
-    users[userId] = { unmatched: 0, mustPay: false };
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
   }
 
+  // Create user if not exists
+  if (!users[userId]) {
+    users[userId] = {
+      unmatched: 0,
+      mustPay: false
+    };
+  }
+
+  // Block if payment required
   if (users[userId].mustPay) {
     return res.status(403).json({
       error: "Payment required before next match"
     });
   }
 
+  const roomId = "room_" + Date.now();
+
   res.json({
-    matchId: "room_" + Date.now()
+    message: "Match found",
+    roomId
   });
 });
 
@@ -59,51 +81,91 @@ app.post("/match", (req, res) => {
 app.post("/unmatch", (req, res) => {
   const { userId } = req.body;
 
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
   if (!users[userId]) {
-    users[userId] = { unmatched: 0, mustPay: false };
+    users[userId] = {
+      unmatched: 0,
+      mustPay: false
+    };
   }
 
   users[userId].unmatched += 1;
   users[userId].mustPay = true;
 
-  res.json({ message: "Unmatched" });
+  console.log(`User ${userId} unmatched. Payment now required.`);
+
+  res.json({
+    message: "Unmatched successfully. Payment required for next match."
+  });
 });
 
-// ================= PAYMENT =================
+// ================= PAYMENT VERIFY =================
 app.post("/pay", async (req, res) => {
   const { userId, reference } = req.body;
+
+  if (!userId || !reference) {
+    return res.status(400).json({
+      error: "Missing userId or reference"
+    });
+  }
 
   try {
     const response = await axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
         headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY || ""}`
         }
       }
     );
 
-    if (response.data.data.status === "success") {
+    const data = response.data.data;
+
+    if (data.status === "success") {
+
+      // Ensure user exists
+      if (!users[userId]) {
+        users[userId] = {
+          unmatched: 0,
+          mustPay: false
+        };
+      }
+
+      // Unlock next match
       users[userId].mustPay = false;
 
+      console.log(`Payment verified for ${userId}`);
+
       return res.json({
-        message: "Payment verified"
+        message: "Payment verified and unlocked"
       });
+
     } else {
       return res.status(400).json({
-        error: "Payment failed"
+        error: "Payment not successful"
       });
     }
+
   } catch (err) {
+    console.error("PAYMENT ERROR:", err.message);
+
     return res.status(500).json({
-      error: "Verification error"
+      error: "Server update failed"
     });
   }
 });
 
-// ================= START =================
+// ================= HEALTH CHECK =================
+app.get("/", (req, res) => {
+  res.send("ZeroSwipe backend running");
+});
+
+// ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log("Server running");
+  console.log(`Server running on port ${PORT}`);
 });
