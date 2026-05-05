@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
 app.use(cors());
@@ -68,14 +69,14 @@ app.post("/match", (req, res) => {
     };
   }
 
-  // 🚨 BLOCK if user must pay
+  // 🚨 Block if payment required
   if (users[userId].mustPay) {
     return res.status(403).json({
       error: "Payment required before next match",
     });
   }
 
-  // ✅ Always match (test mode)
+  // ✅ Temporary match system
   const matchId = "room_" + Date.now();
 
   return res.json({
@@ -103,19 +104,49 @@ app.post("/unmatch", (req, res) => {
   });
 });
 
-// ================= PAY =================
-app.post("/pay", (req, res) => {
-  const { userId } = req.body;
+// ================= PAY (SECURE VERIFICATION) =================
+app.post("/pay", async (req, res) => {
+  const { userId, reference } = req.body;
 
-  if (!users[userId]) {
-    return res.status(400).json({ error: "User not found" });
+  if (!userId || !reference) {
+    return res.status(400).json({ error: "Missing fields" });
   }
 
-  users[userId].mustPay = false;
+  try {
+    const response = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        },
+      }
+    );
 
-  return res.json({
-    message: "Payment successful. You can match again.",
-  });
+    const data = response.data;
+
+    if (data.data.status === "success") {
+      if (!users[userId]) {
+        users[userId] = { unmatched: 0, mustPay: false };
+      }
+
+      // ✅ Unlock user after real payment
+      users[userId].mustPay = false;
+
+      return res.json({
+        message: "Payment verified. You can match again.",
+      });
+    } else {
+      return res.status(400).json({
+        error: "Payment not successful",
+      });
+    }
+  } catch (error) {
+    console.error(error.message);
+
+    return res.status(500).json({
+      error: "Payment verification failed",
+    });
+  }
 });
 
 // ================= START SERVER =================
