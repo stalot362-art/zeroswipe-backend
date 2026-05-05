@@ -16,6 +16,9 @@ const io = new Server(server, {
 // ===== USERS =====
 const users = {};
 
+// ===== MATCHING QUEUE =====
+let waitingQueue = [];
+
 // ===== SOCKET =====
 io.on("connection", (socket) => {
   socket.on("join-room", (roomId) => {
@@ -49,9 +52,31 @@ app.post("/match", (req, res) => {
     return res.status(403).json({ error: "Payment required" });
   }
 
-  const roomId = "room_" + Date.now();
+  console.log("User looking for match:", userId);
 
-  res.json({ message: "Match found", roomId });
+  // If someone is waiting → match them
+  if (waitingQueue.length > 0) {
+    const partner = waitingQueue.shift();
+
+    const roomId = "room_" + Date.now();
+
+    console.log("MATCHED:", userId, "with", partner.userId);
+
+    return res.json({
+      message: "Match found",
+      roomId,
+      partnerId: partner.userId
+    });
+  }
+
+  // Otherwise → wait
+  waitingQueue.push({ userId });
+
+  console.log("User added to queue:", userId);
+
+  return res.json({
+    message: "Waiting for a match"
+  });
 });
 
 // ===== UNMATCH =====
@@ -65,18 +90,18 @@ app.post("/unmatch", (req, res) => {
   users[userId].unmatched += 1;
   users[userId].mustPay = true;
 
-  res.json({ message: "Pay $1 to continue" });
+  console.log("User unmatched:", userId);
+
+  res.json({
+    message: "Unmatched. Pay $1 to continue."
+  });
 });
 
 // ===== PAYMENT =====
 app.post("/pay", async (req, res) => {
-  console.log("BODY:", req.body);
-
   const { userId, reference } = req.body;
 
-  if (!reference) {
-    return res.status(400).json({ error: "No reference provided" });
-  }
+  console.log("PAY START:", userId, reference);
 
   try {
     const response = await axios.get(
@@ -105,7 +130,7 @@ app.post("/pay", async (req, res) => {
     return res.status(400).json({ error: "Payment failed" });
 
   } catch (err) {
-    console.log("ERROR:", err.response?.data || err.message);
+    console.log("PAY ERROR:", err.response?.data || err.message);
 
     return res.status(500).json({
       error: "Server update failed"
