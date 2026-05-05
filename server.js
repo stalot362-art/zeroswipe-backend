@@ -13,12 +13,10 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-// ================= USERS =================
+// ===== USERS =====
 const users = {};
 
-console.log("Server started");
-
-// ================= SOCKET =================
+// ===== SOCKET =====
 io.on("connection", (socket) => {
   socket.on("join-room", (roomId) => {
     socket.join(roomId);
@@ -39,7 +37,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// ================= MATCH =================
+// ===== MATCH =====
 app.post("/match", (req, res) => {
   const { userId } = req.body;
 
@@ -48,20 +46,15 @@ app.post("/match", (req, res) => {
   }
 
   if (users[userId].mustPay) {
-    return res.status(403).json({
-      error: "Payment required"
-    });
+    return res.status(403).json({ error: "Payment required" });
   }
 
   const roomId = "room_" + Date.now();
 
-  res.json({
-    message: "Match found",
-    roomId
-  });
+  res.json({ message: "Match found", roomId });
 });
 
-// ================= UNMATCH =================
+// ===== UNMATCH =====
 app.post("/unmatch", (req, res) => {
   const { userId } = req.body;
 
@@ -72,19 +65,18 @@ app.post("/unmatch", (req, res) => {
   users[userId].unmatched += 1;
   users[userId].mustPay = true;
 
-  res.json({
-    message: "Unmatched. Pay $1 to continue."
-  });
+  res.json({ message: "Pay $1 to continue" });
 });
 
-// ================= PAYMENT =================
+// ===== PAYMENT =====
 app.post("/pay", async (req, res) => {
+  console.log("BODY:", req.body);
+
   const { userId, reference } = req.body;
 
-  console.log("PAY START");
-  console.log("User:", userId);
-  console.log("Reference:", reference);
-  console.log("Secret:", process.env.PAYSTACK_SECRET_KEY);
+  if (!reference) {
+    return res.status(400).json({ error: "No reference provided" });
+  }
 
   try {
     const response = await axios.get(
@@ -96,42 +88,24 @@ app.post("/pay", async (req, res) => {
       }
     );
 
-    console.log("PAYSTACK:", JSON.stringify(response.data));
-
-    const data = response?.data?.data;
-
-    if (!data) {
-      throw new Error("No Paystack data");
-    }
+    const data = response.data.data;
 
     if (data.status === "success") {
-
       if (!users[userId]) {
         users[userId] = { unmatched: 0, mustPay: false };
       }
 
       users[userId].mustPay = false;
 
-      console.log("UNLOCKED USER:", userId);
+      console.log("USER UNLOCKED:", userId);
 
-      return res.json({
-        message: "Payment verified and unlocked"
-      });
-
-    } else {
-      return res.status(400).json({
-        error: "Payment not successful"
-      });
+      return res.json({ message: "Payment verified" });
     }
+
+    return res.status(400).json({ error: "Payment failed" });
 
   } catch (err) {
-    console.log("PAY ERROR:");
-
-    if (err.response) {
-      console.log(err.response.data);
-    } else {
-      console.log(err.message);
-    }
+    console.log("ERROR:", err.response?.data || err.message);
 
     return res.status(500).json({
       error: "Server update failed"
@@ -139,14 +113,14 @@ app.post("/pay", async (req, res) => {
   }
 });
 
-// ================= ROOT =================
+// ===== ROOT =====
 app.get("/", (req, res) => {
   res.send("ZeroSwipe backend running");
 });
 
-// ================= START =================
+// ===== START =====
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log("Running on port", PORT);
+  console.log("Server running on port", PORT);
 });
