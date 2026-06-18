@@ -2,8 +2,15 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
 app.use(cors());
 app.use(express.json());
 
@@ -27,25 +34,32 @@ app.get("/", (req, res) => {
 io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
-  socket.on("register-user", ({ userId, name }) => {
+  socket.on("register-user", async ({ userId, name }) => {
     users[userId] = {
       userId,
       name,
       socketId: socket.id,
-      status: users[userId]?.status || "online"
+      status: users[userId]?.status || "online",
+      currentMatchId: users[userId]?.currentMatchId || null
     };
 
     socket.userId = userId;
+
+    await supabase.from("users").upsert({
+      id: userId,
+      name
+    });
 
     socket.emit("registered", users[userId]);
 
     socket.emit("user-status-updated", {
       userId,
-      status: users[userId].status
+      status: users[userId].status,
+      matchId: users[userId].currentMatchId
     });
   });
 
-  socket.on("find-match", ({ userId }) => {
+  socket.on("find-match", async ({ userId }) => {
     if (!users[userId]) {
       socket.emit("error-message", "User not registered");
       return;
@@ -87,6 +101,13 @@ io.on("connection", (socket) => {
     users[partnerId].currentMatchId = matchId;
 
     const partnerSocketId = users[partnerId].socketId;
+
+    await supabase.from("matches").insert({
+      id: matchId,
+      user1_id: userId,
+      user2_id: partnerId,
+      status: "matched"
+    });
 
     socket.join(matchId);
     io.sockets.sockets.get(partnerSocketId)?.join(matchId);
@@ -188,12 +209,19 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("accept-scheduled-date", ({ matchId, dateTime }) => {
+  socket.on("accept-scheduled-date", async ({ matchId, dateTime }) => {
     const match = activeMatches[matchId];
     if (!match) return;
 
     match.scheduledDate = dateTime;
     match.status = "date_scheduled";
+
+    await supabase.from("scheduled_dates").insert({
+      match_id: matchId,
+      proposed_by: socket.userId,
+      scheduled_time: dateTime,
+      status: "confirmed"
+    });
 
     match.users.forEach(userId => {
       const socketId = users[userId]?.socketId;
