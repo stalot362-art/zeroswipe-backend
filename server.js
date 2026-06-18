@@ -87,15 +87,21 @@ io.on("connection", (socket) => {
   });
 
   // Request video date
+ 
   socket.on("request-video-date", ({ matchId, fromUserId }) => {
-    const match = activeMatches[matchId];
-    if (!match) return;
+  const match = activeMatches[matchId];
+  if (!match) return;
 
-    socket.to(matchId).emit("video-date-request", {
+  const receiverId = match.users.find(id => id !== fromUserId);
+  const receiverSocketId = users[receiverId]?.socketId;
+
+  if (receiverSocketId) {
+    io.to(receiverSocketId).emit("video-date-request", {
       matchId,
       fromUserId
     });
-  });
+  }
+});
 
   // Accept video date
   socket.on("accept-video-date", ({ matchId }) => {
@@ -108,15 +114,21 @@ io.on("connection", (socket) => {
   });
 
   // Request game date
+  
   socket.on("request-game-date", ({ matchId, fromUserId }) => {
-    const match = activeMatches[matchId];
-    if (!match) return;
+  const match = activeMatches[matchId];
+  if (!match) return;
 
-    socket.to(matchId).emit("game-date-request", {
+  const receiverId = match.users.find(id => id !== fromUserId);
+  const receiverSocketId = users[receiverId]?.socketId;
+
+  if (receiverSocketId) {
+    io.to(receiverSocketId).emit("game-date-request", {
       matchId,
       fromUserId
     });
-  });
+  }
+});
 
   // Accept game date
   socket.on("accept-game-date", ({ matchId }) => {
@@ -130,15 +142,20 @@ io.on("connection", (socket) => {
 
   // Request scheduled date
   socket.on("request-scheduled-date", ({ matchId, fromUserId, dateTime }) => {
-    const match = activeMatches[matchId];
-    if (!match) return;
+  const match = activeMatches[matchId];
+  if (!match) return;
 
-    socket.to(matchId).emit("scheduled-date-request", {
+  const receiverId = match.users.find(id => id !== fromUserId);
+  const receiverSocketId = users[receiverId]?.socketId;
+
+  if (receiverSocketId) {
+    io.to(receiverSocketId).emit("scheduled-date-request", {
       matchId,
       fromUserId,
       dateTime
     });
-  });
+  }
+});
 
   // Accept scheduled date
   socket.on("accept-scheduled-date", ({ matchId, dateTime }) => {
