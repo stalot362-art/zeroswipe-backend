@@ -16,12 +16,10 @@ const io = new Server(server, {
   }
 });
 
-// Temporary memory storage for version 1
 const users = {};
 const activeMatches = {};
 let waitingQueue = [];
 
-// Health check
 app.get("/", (req, res) => {
   res.send("Rindera backend running");
 });
@@ -29,29 +27,30 @@ app.get("/", (req, res) => {
 io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
-  // User joins with a basic userId
   socket.on("register-user", ({ userId, name }) => {
     users[userId] = {
       userId,
       name,
       socketId: socket.id,
-      status: "online"
+      status: users[userId]?.status || "online"
     };
 
     socket.userId = userId;
 
-    console.log("Registered:", userId, name);
     socket.emit("registered", users[userId]);
+
+    socket.emit("user-status-updated", {
+      userId,
+      status: users[userId].status
+    });
   });
 
-  // Find basic match
   socket.on("find-match", ({ userId }) => {
     if (!users[userId]) {
       socket.emit("error-message", "User not registered");
       return;
     }
 
-    // Remove same user from queue first
     waitingQueue = waitingQueue.filter(id => id !== userId);
 
     const partnerId = waitingQueue.find(id => id !== userId);
@@ -59,11 +58,17 @@ io.on("connection", (socket) => {
     if (!partnerId) {
       waitingQueue.push(userId);
       users[userId].status = "waiting";
+
       socket.emit("waiting-for-match");
+
+      socket.emit("user-status-updated", {
+        userId,
+        status: "waiting"
+      });
+
       return;
     }
 
-    // Remove partner from queue
     waitingQueue = waitingQueue.filter(id => id !== partnerId);
 
     const matchId = "match_" + Date.now();
@@ -78,86 +83,111 @@ io.on("connection", (socket) => {
     users[userId].status = "matched";
     users[partnerId].status = "matched";
 
+    users[userId].currentMatchId = matchId;
+    users[partnerId].currentMatchId = matchId;
+
     const partnerSocketId = users[partnerId].socketId;
 
     socket.join(matchId);
     io.sockets.sockets.get(partnerSocketId)?.join(matchId);
 
+    socket.emit("user-status-updated", {
+      userId,
+      status: "matched",
+      matchId
+    });
+
+    io.to(partnerSocketId).emit("user-status-updated", {
+      userId: partnerId,
+      status: "matched",
+      matchId
+    });
+
     io.to(matchId).emit("match-found", activeMatches[matchId]);
   });
 
-  // Request video date
- 
   socket.on("request-video-date", ({ matchId, fromUserId }) => {
-  const match = activeMatches[matchId];
-  if (!match) return;
+    const match = activeMatches[matchId];
+    if (!match) return;
 
-  const receiverId = match.users.find(id => id !== fromUserId);
-  const receiverSocketId = users[receiverId]?.socketId;
+    const receiverId = match.users.find(id => id !== fromUserId);
+    const receiverSocketId = users[receiverId]?.socketId;
 
-  if (receiverSocketId) {
-    io.to(receiverSocketId).emit("video-date-request", {
-      matchId,
-      fromUserId
-    });
-  }
-});
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("video-date-request", {
+        matchId,
+        fromUserId
+      });
+    }
+  });
 
-  // Accept video date
   socket.on("accept-video-date", ({ matchId }) => {
+    const match = activeMatches[matchId];
+    if (!match) return;
+
     const roomId = "video_" + matchId;
 
-    io.to(matchId).emit("video-date-started", {
-      matchId,
-      roomId
+    match.users.forEach(userId => {
+      const socketId = users[userId]?.socketId;
+
+      if (socketId) {
+        io.to(socketId).emit("video-date-started", {
+          matchId,
+          roomId
+        });
+      }
     });
   });
 
-  // Request game date
-  
   socket.on("request-game-date", ({ matchId, fromUserId }) => {
-  const match = activeMatches[matchId];
-  if (!match) return;
+    const match = activeMatches[matchId];
+    if (!match) return;
 
-  const receiverId = match.users.find(id => id !== fromUserId);
-  const receiverSocketId = users[receiverId]?.socketId;
+    const receiverId = match.users.find(id => id !== fromUserId);
+    const receiverSocketId = users[receiverId]?.socketId;
 
-  if (receiverSocketId) {
-    io.to(receiverSocketId).emit("game-date-request", {
-      matchId,
-      fromUserId
-    });
-  }
-});
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("game-date-request", {
+        matchId,
+        fromUserId
+      });
+    }
+  });
 
-  // Accept game date
   socket.on("accept-game-date", ({ matchId }) => {
+    const match = activeMatches[matchId];
+    if (!match) return;
+
     const gameSessionId = "game_" + matchId;
 
-    io.to(matchId).emit("game-date-started", {
-      matchId,
-      gameSessionId
+    match.users.forEach(userId => {
+      const socketId = users[userId]?.socketId;
+
+      if (socketId) {
+        io.to(socketId).emit("game-date-started", {
+          matchId,
+          gameSessionId
+        });
+      }
     });
   });
 
-  // Request scheduled date
   socket.on("request-scheduled-date", ({ matchId, fromUserId, dateTime }) => {
-  const match = activeMatches[matchId];
-  if (!match) return;
+    const match = activeMatches[matchId];
+    if (!match) return;
 
-  const receiverId = match.users.find(id => id !== fromUserId);
-  const receiverSocketId = users[receiverId]?.socketId;
+    const receiverId = match.users.find(id => id !== fromUserId);
+    const receiverSocketId = users[receiverId]?.socketId;
 
-  if (receiverSocketId) {
-    io.to(receiverSocketId).emit("scheduled-date-request", {
-      matchId,
-      fromUserId,
-      dateTime
-    });
-  }
-});
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("scheduled-date-request", {
+        matchId,
+        fromUserId,
+        dateTime
+      });
+    }
+  });
 
-  // Accept scheduled date
   socket.on("accept-scheduled-date", ({ matchId, dateTime }) => {
     const match = activeMatches[matchId];
     if (!match) return;
@@ -165,23 +195,16 @@ io.on("connection", (socket) => {
     match.scheduledDate = dateTime;
     match.status = "date_scheduled";
 
-    io.to(matchId).emit("scheduled-date-confirmed", {
-      matchId,
-      dateTime
+    match.users.forEach(userId => {
+      const socketId = users[userId]?.socketId;
+
+      if (socketId) {
+        io.to(socketId).emit("scheduled-date-confirmed", {
+          matchId,
+          dateTime
+        });
+      }
     });
-  });
-
-  // WebRTC signaling
-  socket.on("offer", ({ roomId, offer }) => {
-    socket.to(roomId).emit("offer", offer);
-  });
-
-  socket.on("answer", ({ roomId, answer }) => {
-    socket.to(roomId).emit("answer", answer);
-  });
-
-  socket.on("ice-candidate", ({ roomId, candidate }) => {
-    socket.to(roomId).emit("ice-candidate", candidate);
   });
 
   socket.on("disconnect", () => {
