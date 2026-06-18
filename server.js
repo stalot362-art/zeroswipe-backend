@@ -35,20 +35,40 @@ io.on("connection", (socket) => {
   console.log("Connected:", socket.id);
 
   socket.on("register-user", async ({ userId, name }) => {
-    users[userId] = {
-      userId,
-      name,
-      socketId: socket.id,
-      status: users[userId]?.status || "online",
-      currentMatchId: users[userId]?.currentMatchId || null
-    };
-
-    socket.userId = userId;
-
     await supabase.from("users").upsert({
       id: userId,
       name
     });
+
+    const { data: latestMatch } = await supabase
+      .from("matches")
+      .select("*")
+      .eq("active", true)
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    users[userId] = {
+      userId,
+      name,
+      socketId: socket.id,
+      status: latestMatch ? "matched" : "online",
+      currentMatchId: latestMatch ? latestMatch.id : null
+    };
+
+    socket.userId = userId;
+
+    if (latestMatch) {
+      activeMatches[latestMatch.id] = {
+        matchId: latestMatch.id,
+        users: [latestMatch.user1_id, latestMatch.user2_id],
+        status: latestMatch.status,
+        createdAt: latestMatch.created_at
+      };
+
+      socket.join(latestMatch.id);
+    }
 
     socket.emit("registered", users[userId]);
 
@@ -57,6 +77,10 @@ io.on("connection", (socket) => {
       status: users[userId].status,
       matchId: users[userId].currentMatchId
     });
+
+    if (latestMatch) {
+      socket.emit("match-found", activeMatches[latestMatch.id]);
+    }
   });
 
   socket.on("find-match", async ({ userId }) => {
@@ -96,7 +120,6 @@ io.on("connection", (socket) => {
 
     users[userId].status = "matched";
     users[partnerId].status = "matched";
-
     users[userId].currentMatchId = matchId;
     users[partnerId].currentMatchId = matchId;
 
@@ -106,7 +129,8 @@ io.on("connection", (socket) => {
       id: matchId,
       user1_id: userId,
       user2_id: partnerId,
-      status: "matched"
+      status: "matched",
+      active: true
     });
 
     socket.join(matchId);
