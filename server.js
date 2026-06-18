@@ -2,66 +2,159 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
-const axios = require("axios");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
+
 const io = new Server(server, {
-  cors: { origin: "*" }
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
-// ===== USERS =====
+// Temporary memory storage for version 1
 const users = {};
-
-// ===== WAITING QUEUE (SOCKETS) =====
+const activeMatches = {};
 let waitingQueue = [];
 
-// ===== SOCKET MATCHING =====
+// Health check
+app.get("/", (req, res) => {
+  res.send("Rindera backend running");
+});
+
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("Connected:", socket.id);
 
-  // 🔥 FIND MATCH
-  socket.on("find-match", (userId) => {
-    console.log("Looking for match:", userId);
+  // User joins with a basic userId
+  socket.on("register-user", ({ userId, name }) => {
+    users[userId] = {
+      userId,
+      name,
+      socketId: socket.id,
+      status: "online"
+    };
 
-    // Ensure user exists
+    socket.userId = userId;
+
+    console.log("Registered:", userId, name);
+    socket.emit("registered", users[userId]);
+  });
+
+  // Find basic match
+  socket.on("find-match", ({ userId }) => {
     if (!users[userId]) {
-      users[userId] = { unmatched: 0, mustPay: false };
-    }
-
-    // Block if payment required
-    if (users[userId].mustPay) {
-      socket.emit("payment-required");
+      socket.emit("error-message", "User not registered");
       return;
     }
 
-    // If someone is waiting → match instantly
-    if (waitingQueue.length > 0) {
-      const partnerSocket = waitingQueue.shift();
+    // Remove same user from queue first
+    waitingQueue = waitingQueue.filter(id => id !== userId);
 
-      const roomId = "room_" + Date.now();
+    const partnerId = waitingQueue.find(id => id !== userId);
 
-      socket.join(roomId);
-      partnerSocket.join(roomId);
-
-      console.log("MATCHED:", socket.id, "with", partnerSocket.id);
-
-      socket.emit("match-found", { roomId });
-      partnerSocket.emit("match-found", { roomId });
-
-    } else {
-      // Otherwise → wait
-      waitingQueue.push(socket);
-      socket.emit("waiting");
-
-      console.log("Added to queue:", socket.id);
+    if (!partnerId) {
+      waitingQueue.push(userId);
+      users[userId].status = "waiting";
+      socket.emit("waiting-for-match");
+      return;
     }
+
+    // Remove partner from queue
+    waitingQueue = waitingQueue.filter(id => id !== partnerId);
+
+    const matchId = "match_" + Date.now();
+
+    activeMatches[matchId] = {
+      matchId,
+      users: [userId, partnerId],
+      status: "matched",
+      createdAt: new Date().toISOString()
+    };
+
+    users[userId].status = "matched";
+    users[partnerId].status = "matched";
+
+    const partnerSocketId = users[partnerId].socketId;
+
+    socket.join(matchId);
+    io.sockets.sockets.get(partnerSocketId)?.join(matchId);
+
+    io.to(matchId).emit("match-found", activeMatches[matchId]);
   });
 
-  // 🔥 WEBRTC SIGNALING
+  // Request video date
+  socket.on("request-video-date", ({ matchId, fromUserId }) => {
+    const match = activeMatches[matchId];
+    if (!match) return;
+
+    socket.to(matchId).emit("video-date-request", {
+      matchId,
+      fromUserId
+    });
+  });
+
+  // Accept video date
+  socket.on("accept-video-date", ({ matchId }) => {
+    const roomId = "video_" + matchId;
+
+    io.to(matchId).emit("video-date-started", {
+      matchId,
+      roomId
+    });
+  });
+
+  // Request game date
+  socket.on("request-game-date", ({ matchId, fromUserId }) => {
+    const match = activeMatches[matchId];
+    if (!match) return;
+
+    socket.to(matchId).emit("game-date-request", {
+      matchId,
+      fromUserId
+    });
+  });
+
+  // Accept game date
+  socket.on("accept-game-date", ({ matchId }) => {
+    const gameSessionId = "game_" + matchId;
+
+    io.to(matchId).emit("game-date-started", {
+      matchId,
+      gameSessionId
+    });
+  });
+
+  // Request scheduled date
+  socket.on("request-scheduled-date", ({ matchId, fromUserId, dateTime }) => {
+    const match = activeMatches[matchId];
+    if (!match) return;
+
+    socket.to(matchId).emit("scheduled-date-request", {
+      matchId,
+      fromUserId,
+      dateTime
+    });
+  });
+
+  // Accept scheduled date
+  socket.on("accept-scheduled-date", ({ matchId, dateTime }) => {
+    const match = activeMatches[matchId];
+    if (!match) return;
+
+    match.scheduledDate = dateTime;
+    match.status = "date_scheduled";
+
+    io.to(matchId).emit("scheduled-date-confirmed", {
+      matchId,
+      dateTime
+    });
+  });
+
+  // WebRTC signaling
   socket.on("offer", ({ roomId, offer }) => {
     socket.to(roomId).emit("offer", offer);
   });
@@ -74,80 +167,19 @@ io.on("connection", (socket) => {
     socket.to(roomId).emit("ice-candidate", candidate);
   });
 
-  // 🔥 DISCONNECT
   socket.on("disconnect", () => {
     console.log("Disconnected:", socket.id);
 
-    // Remove from queue if waiting
-    waitingQueue = waitingQueue.filter(s => s !== socket);
-  });
-});
-
-// ===== UNMATCH =====
-app.post("/unmatch", (req, res) => {
-  const { userId } = req.body;
-
-  if (!users[userId]) {
-    users[userId] = { unmatched: 0, mustPay: false };
-  }
-
-  users[userId].unmatched += 1;
-  users[userId].mustPay = true;
-
-  res.json({
-    message: "Unmatched. Pay $1 to continue."
-  });
-});
-
-// ===== PAYMENT =====
-app.post("/pay", async (req, res) => {
-  const { userId, reference } = req.body;
-
-  console.log("PAY:", userId, reference);
-
-  try {
-    const response = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-        }
-      }
-    );
-
-    const data = response.data.data;
-
-    if (data.status === "success") {
-      if (!users[userId]) {
-        users[userId] = { unmatched: 0, mustPay: false };
-      }
-
-      users[userId].mustPay = false;
-
-      console.log("USER UNLOCKED:", userId);
-
-      return res.json({ message: "Payment verified" });
+    if (socket.userId && users[socket.userId]) {
+      users[socket.userId].status = "offline";
     }
 
-    return res.status(400).json({ error: "Payment failed" });
-
-  } catch (err) {
-    console.log("PAY ERROR:", err.response?.data || err.message);
-
-    return res.status(500).json({
-      error: "Server update failed"
-    });
-  }
+    waitingQueue = waitingQueue.filter(id => id !== socket.userId);
+  });
 });
 
-// ===== ROOT =====
-app.get("/", (req, res) => {
-  res.send("ZeroSwipe backend running");
-});
-
-// ===== START =====
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log("Running on port", PORT);
+  console.log("Rindera backend running on port", PORT);
 });
