@@ -125,13 +125,20 @@ io.on("connection", (socket) => {
 
     const partnerSocketId = users[partnerId].socketId;
 
-    await supabase.from("matches").insert({
-      id: matchId,
-      user1_id: userId,
-      user2_id: partnerId,
-      status: "matched",
-      active: true
-    });
+    const { data: savedMatch, error: matchSaveError } = await supabase
+  .from("matches")
+  .insert({
+    id: matchId,
+    user1_id: userId,
+    user2_id: partnerId,
+    status: "matched",
+    active: true
+  })
+  .select()
+  .single();
+
+console.log("MATCH SAVE RESULT:", savedMatch);
+console.log("MATCH SAVE ERROR:", matchSaveError);
 
     socket.join(matchId);
     io.sockets.sockets.get(partnerSocketId)?.join(matchId);
