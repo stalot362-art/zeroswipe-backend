@@ -67,6 +67,12 @@ io.on("connection", (socket) => {
       .limit(1)
       .maybeSingle();
 
+    const { data: matchHistory } = await supabase
+      .from("matches")
+      .select("*")
+      .or(`user1_id.eq.${finalUserId},user2_id.eq.${finalUserId}`)
+      .order("created_at", { ascending: false });
+
     users[finalUserId] = {
       userId: finalUserId,
       name,
@@ -89,6 +95,11 @@ io.on("connection", (socket) => {
     }
 
     socket.emit("registered", users[finalUserId]);
+
+    socket.emit("match-history", {
+      userId: finalUserId,
+      matches: matchHistory || []
+    });
 
     socket.emit("user-status-updated", {
       userId: finalUserId,
