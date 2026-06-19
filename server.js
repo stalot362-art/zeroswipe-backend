@@ -38,7 +38,19 @@ io.on("connection", (socket) => {
     let finalUserId = userId;
 
     if (!finalUserId) {
-      finalUserId = "user_" + Date.now();
+      const { data: existingUser } = await supabase
+        .from("users")
+        .select("*")
+        .eq("name", name)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingUser) {
+        finalUserId = existingUser.id;
+      } else {
+        finalUserId = "user_" + Date.now();
+      }
     }
 
     await supabase.from("users").upsert({
@@ -46,29 +58,61 @@ io.on("connection", (socket) => {
       name
     });
 
+    const { data: latestMatch } = await supabase
+      .from("matches")
+      .select("*")
+      .eq("active", true)
+      .or(`user1_id.eq.${finalUserId},user2_id.eq.${finalUserId}`)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     users[finalUserId] = {
       userId: finalUserId,
       name,
       socketId: socket.id,
-      status: "online",
-      currentMatchId: null
+      status: latestMatch ? "matched" : "online",
+      currentMatchId: latestMatch ? latestMatch.id : null
     };
 
     socket.userId = finalUserId;
+
+    if (latestMatch) {
+      activeMatches[latestMatch.id] = {
+        matchId: latestMatch.id,
+        users: [latestMatch.user1_id, latestMatch.user2_id],
+        status: latestMatch.status,
+        createdAt: latestMatch.created_at
+      };
+
+      socket.join(latestMatch.id);
+    }
 
     socket.emit("registered", users[finalUserId]);
 
     socket.emit("user-status-updated", {
       userId: finalUserId,
-      status: "online",
-      matchId: null
+      status: users[finalUserId].status,
+      matchId: users[finalUserId].currentMatchId
     });
+
+    if (latestMatch) {
+      socket.emit("match-found", activeMatches[latestMatch.id]);
+    }
   });
 
   socket.on("find-match", async ({ userId }) => {
     if (!users[userId]) {
       socket.emit("error-message", "User not registered");
       return;
+    }
+
+    if (users[userId].status === "matched") {
+      const matchId = users[userId].currentMatchId;
+      if (matchId && activeMatches[matchId]) {
+        socket.emit("match-found", activeMatches[matchId]);
+        return;
+      }
     }
 
     waitingQueue = waitingQueue.filter(id => id !== userId);
@@ -249,10 +293,6 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     console.log("Disconnected:", socket.id);
-
-    if (socket.userId && users[socket.userId]) {
-      users[socket.userId].status = "offline";
-    }
 
     waitingQueue = waitingQueue.filter(id => id !== socket.userId);
   });
