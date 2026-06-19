@@ -32,7 +32,7 @@ app.get("/", (req, res) => {
 });
 
 io.on("connection", (socket) => {
-  console.log("Connected:", socket.id);
+  console.log("NEW SOCKET CONNECTION:", socket.id);
 
   socket.on("register-user", async ({ userId, name }) => {
     await supabase.from("users").upsert({
