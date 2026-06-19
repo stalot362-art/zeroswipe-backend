@@ -31,6 +31,40 @@ app.get("/", (req, res) => {
   res.send("Rindera backend running");
 });
 
+async function getMatchHistoryWithNames(userId) {
+  const { data: matches, error } = await supabase
+    .from("matches")
+    .select("*")
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+    .order("created_at", { ascending: false });
+
+  if (error || !matches) {
+    return [];
+  }
+
+  const otherUserIds = matches.map(match =>
+    match.user1_id === userId ? match.user2_id : match.user1_id
+  );
+
+  const { data: partnerUsers } = await supabase
+    .from("users")
+    .select("*")
+    .in("id", otherUserIds);
+
+  return matches.map(match => {
+    const otherUserId =
+      match.user1_id === userId ? match.user2_id : match.user1_id;
+
+    const partner = partnerUsers?.find(user => user.id === otherUserId);
+
+    return {
+      ...match,
+      partner_id: otherUserId,
+      partner_name: partner ? partner.name : otherUserId
+    };
+  });
+}
+
 io.on("connection", (socket) => {
   console.log("NEW SOCKET CONNECTION:", socket.id);
 
@@ -67,11 +101,7 @@ io.on("connection", (socket) => {
       .limit(1)
       .maybeSingle();
 
-    const { data: matchHistory } = await supabase
-      .from("matches")
-      .select("*")
-      .or(`user1_id.eq.${finalUserId},user2_id.eq.${finalUserId}`)
-      .order("created_at", { ascending: false });
+    const matchHistory = await getMatchHistoryWithNames(finalUserId);
 
     users[finalUserId] = {
       userId: finalUserId,
@@ -98,7 +128,7 @@ io.on("connection", (socket) => {
 
     socket.emit("match-history", {
       userId: finalUserId,
-      matches: matchHistory || []
+      matches: matchHistory
     });
 
     socket.emit("user-status-updated", {
