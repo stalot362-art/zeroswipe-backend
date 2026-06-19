@@ -35,10 +35,76 @@ io.on("connection", (socket) => {
   console.log("NEW SOCKET CONNECTION:", socket.id);
 
   socket.on("register-user", async ({ userId, name }) => {
+  let finalUserId = userId;
+
+  if (!finalUserId) {
+    const { data: existingUser } = await supabase
+      .from("users")
+      .select("*")
+      .eq("name", name)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingUser) {
+      finalUserId = existingUser.id;
+    } else {
+      finalUserId = "user_" + Date.now();
+
+      await supabase.from("users").insert({
+        id: finalUserId,
+        name
+      });
+    }
+  } else {
     await supabase.from("users").upsert({
-      id: userId,
+      id: finalUserId,
       name
     });
+  }
+
+  const { data: latestMatch } = await supabase
+    .from("matches")
+    .select("*")
+    .eq("active", true)
+    .or(`user1_id.eq.${finalUserId},user2_id.eq.${finalUserId}`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  users[finalUserId] = {
+    userId: finalUserId,
+    name,
+    socketId: socket.id,
+    status: latestMatch ? "matched" : "online",
+    currentMatchId: latestMatch ? latestMatch.id : null
+  };
+
+  socket.userId = finalUserId;
+
+  if (latestMatch) {
+    activeMatches[latestMatch.id] = {
+      matchId: latestMatch.id,
+      users: [latestMatch.user1_id, latestMatch.user2_id],
+      status: latestMatch.status,
+      createdAt: latestMatch.created_at
+    };
+
+    socket.join(latestMatch.id);
+  }
+
+  socket.emit("registered", users[finalUserId]);
+
+  socket.emit("user-status-updated", {
+    userId: finalUserId,
+    status: users[finalUserId].status,
+    matchId: users[finalUserId].currentMatchId
+  });
+
+  if (latestMatch) {
+    socket.emit("match-found", activeMatches[latestMatch.id]);
+  }
+});
 
     const { data: latestMatch } = await supabase
       .from("matches")
